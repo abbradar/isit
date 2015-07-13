@@ -11,16 +11,10 @@ import Language.Haskell.Exts.Parser (parse, ParseResult(..))
 import qualified Language.Haskell.Exts.Syntax as H
 import Language.Haskell.Meta.Syntax.Translate (toPat)
 
-lookupValueName' :: String -> Q Name
-lookupValueName' n = do
-  x <- lookupValueName n
-  case x of
-   Nothing -> fail $ "cannot find (" ++ n ++ ") in scope"
-   Just r -> return r
-
 convEq :: Name -> WriterT [(Name, Name)] Q Name
 convEq (nameBase -> n) = do
-  var <- lift $ lookupValueName' n
+  var' <- lift $ lookupValueName n
+  var <- maybe (fail $ "Can't find (" ++ n ++ ") in scope") return var'
   tmp <- lift $ newName n
   tell [(var, tmp)]
   return tmp
@@ -46,14 +40,15 @@ convPat (ViewP exp p) = ViewP exp <$> convPat p
 isExp :: String -> Q Exp
 isExp input = case parse input of
   ParseFailed (SrcLoc _ line col) str ->
-    fail $ "can't parse a pattern at line " ++ show line ++ ", column " ++ show col ++ ": " ++ str
+    fail $ "Can't parse a pattern at line " ++ show line ++ ", column " ++ show col ++ ": " ++ str
   ParseOk pat' -> do
     (pat, eqs) <- runWriterT $ convPat $ toPat (pat' :: H.Pat)
-    eq <- VarE <$> lookupValueName' "=="
-    and <- VarE <$> lookupValueName' "&&"
-    true <- ConE <$> lookupValueName' "True"
-    false <- ConE <$> lookupValueName' "False"
-    let texp = foldr (\(a, b) e -> InfixE (Just $ InfixE (Just $ VarE a) eq (Just $ VarE b)) and (Just e)) true eqs
+    let var = Just . VarE
+        true = ConE $ mkName "True"
+        false = ConE $ mkName "False"
+        eq = VarE $ mkName "=="
+        and = VarE $ mkName "&&"
+        texp = foldr (\(a, b) e -> InfixE (Just $ InfixE (var a) eq (var b)) and (Just e)) true eqs
     return $ LamCaseE [ Match pat (GuardedB [(NormalG texp, true)]) []
                       , Match WildP (NormalB false) []
                       ]
