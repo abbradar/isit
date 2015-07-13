@@ -11,10 +11,14 @@ import Language.Haskell.Exts.Parser (parse, ParseResult(..))
 import qualified Language.Haskell.Exts.Syntax as H
 import Language.Haskell.Meta.Syntax.Translate (toPat)
 
+lookupValueName' :: String -> Q Name
+lookupValueName' n = do
+  x <- lookupValueName n
+  maybe (fail $ "Can't find (" ++ n ++ ") in scope") return x
+
 convEq :: Name -> WriterT [(Name, Name)] Q Name
 convEq (nameBase -> n) = do
-  var' <- lift $ lookupValueName n
-  var <- maybe (fail $ "Can't find (" ++ n ++ ") in scope") return var'
+  var <- lift $ lookupValueName' n
   tmp <- lift $ newName n
   tell [(var, tmp)]
   return tmp
@@ -43,11 +47,11 @@ isExp input = case parse input of
     fail $ "Can't parse a pattern at line " ++ show line ++ ", column " ++ show col ++ ": " ++ str
   ParseOk pat' -> do
     (pat, eqs) <- runWriterT $ convPat $ toPat (pat' :: H.Pat)
+    true <- ConE <$> lookupValueName' "True"
+    false <- ConE <$> lookupValueName' "False"
+    eq <- VarE <$> lookupValueName' "=="
+    and <- VarE <$> lookupValueName' "&&"
     let var = Just . VarE
-        true = ConE $ mkName "True"
-        false = ConE $ mkName "False"
-        eq = VarE $ mkName "=="
-        and = VarE $ mkName "&&"
         texp = foldr (\(a, b) e -> InfixE (Just $ InfixE (var a) eq (var b)) and (Just e)) true eqs
     return $ LamCaseE [ Match pat (GuardedB [(NormalG texp, true)]) []
                       , Match WildP (NormalB false) []
